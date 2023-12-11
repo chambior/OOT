@@ -1,5 +1,6 @@
 #include "SohMenuBar.h"
 #include "ImGui/imgui.h"
+#include "regex"
 #include "public/bridge/consolevariablebridge.h"
 #include <libultraship/libultraship.h>
 #include "UIWidgets.hpp"
@@ -10,8 +11,10 @@
 #include "soh/Enhancements/presets.h"
 #include "soh/Enhancements/mods.h"
 #include "Enhancements/cosmetics/authenticGfxPatches.h"
-#ifdef ENABLE_CROWD_CONTROL
+#ifdef ENABLE_REMOTE_CONTROL
 #include "Enhancements/crowd-control/CrowdControl.h"
+#include "Enhancements/game-interactor/GameInteractor_Sail.h"
+#include "Enhancements/game-interactor/GameInteractor_Anchor.h"
 #endif
 
 
@@ -22,13 +25,14 @@
 #include "Enhancements/debugger/colViewer.h"
 #include "Enhancements/debugger/debugSaveEditor.h"
 #include "Enhancements/debugger/dlViewer.h"
+#include "Enhancements/debugger/valueViewer.h"
 #include "Enhancements/gameplaystatswindow.h"
 #include "Enhancements/randomizer/randomizer_check_tracker.h"
 #include "Enhancements/randomizer/randomizer_entrance_tracker.h"
 #include "Enhancements/randomizer/randomizer_item_tracker.h"
 #include "Enhancements/randomizer/randomizer_settings_window.h"
 
-extern bool ShouldClearTextureCacheAtEndOfFrame;
+extern bool ToggleAltAssetsAtEndOfFrame;
 extern bool isBetaQuestEnabled;
 
 extern "C" PlayState* gPlayState;
@@ -492,6 +496,8 @@ extern std::shared_ptr<GameplayStatsWindow> mGameplayStatsWindow;
 void DrawEnhancementsMenu() {
     if (ImGui::BeginMenu("Enhancements"))
     {
+        ImGui::BeginDisabled(CVarGetInteger("gDisableChangingSettings", 0));
+
         DrawPresetSelector(PRESET_TYPE_ENHANCEMENTS);
 
         UIWidgets::PaddedSeparator();
@@ -579,6 +585,8 @@ void DrawEnhancementsMenu() {
                     "- Obtained the Master Sword\n"
                     "- Not within range of Time Block\n"
                     "- Not within range of Ocarina playing spots");
+                UIWidgets::PaddedEnhancementCheckbox("Skip water take breath animation", "gSkipSwimDeepEndAnim", true, false);
+                UIWidgets::Tooltip("Skips Link's taking breath animation after coming up from water. This setting does not interfere with getting items from underwater.");
                 ImGui::EndMenu();
             }
 
@@ -605,17 +613,25 @@ void DrawEnhancementsMenu() {
                 UIWidgets::PaddedEnhancementCheckbox("Nuts explode bombs", "gNutsExplodeBombs", true, false);
                 UIWidgets::Tooltip("Makes nuts explode bombs, similar to how they interact with bombchus. This does not affect bombflowers.");
                 UIWidgets::PaddedEnhancementCheckbox("Equip Multiple Arrows at Once", "gSeparateArrows", true, false);
-                UIWidgets::Tooltip("Allow the bow and magic arrows to be equipped at the same time on different slots");
+                UIWidgets::Tooltip("Allow the bow and magic arrows to be equipped at the same time on different slots. (Note this will disable the behaviour of the 'Equip Dupe' glitch)");
                 UIWidgets::PaddedEnhancementCheckbox("Bow as Child/Slingshot as Adult", "gBowSlingShotAmmoFix", true, false);
                 UIWidgets::Tooltip("Allows child to use bow with arrows.\nAllows adult to use slingshot with seeds.\n\nRequires glitches or 'Timeless Equipment' cheat to equip.");
                 UIWidgets::PaddedEnhancementCheckbox("Better Farore's Wind", "gBetterFW", true, false);
                 UIWidgets::Tooltip("Helps FW persist between ages, gives child and adult separate FW points, and can be used in more places.");
+                UIWidgets::PaddedEnhancementCheckbox("Remove Explosive Limit", "gRemoveExplosiveLimit", true, false);
+                UIWidgets::Tooltip("Removes the cap of 3 active explosives being deployed at once.");
                 UIWidgets::PaddedEnhancementCheckbox("Static Explosion Radius", "gStaticExplosionRadius", true, false);
                 UIWidgets::Tooltip("Explosions are now a static size, like in Majora's Mask and OoT3D. Makes bombchu hovering much easier.");
                 UIWidgets::PaddedEnhancementCheckbox("Prevent Bombchus Forcing First-Person", "gDisableFirstPersonChus", true, false);
                 UIWidgets::Tooltip("Prevent bombchus from forcing the camera into first-person mode when released.");
                 UIWidgets::PaddedEnhancementCheckbox("Aiming reticle for the bow/slingshot", "gBowReticle", true, false);
                 UIWidgets::Tooltip("Aiming with a bow or slingshot will display a reticle as with the hookshot when the projectile is ready to fire.");
+                if (UIWidgets::PaddedEnhancementCheckbox("Allow strength equipment to be toggled", "gToggleStrength", true, false)) {
+                    if (!CVarGetInteger("gToggleStrength", 0)) {
+                        CVarSetInteger("gStrengthDisabled", 0);
+                    }
+                }
+                UIWidgets::Tooltip("Allows strength to be toggled on and off by pressing A on the strength upgrade in the equipment subscreen of the pause menu (This allows performing some glitches that require the player to not have strength).");
                 ImGui::EndMenu();
             }
 
@@ -906,7 +922,10 @@ void DrawEnhancementsMenu() {
         {
             if (ImGui::BeginMenu("Mods")) {
                 if (UIWidgets::PaddedEnhancementCheckbox("Use Alternate Assets", "gAltAssets", false, false)) {
-                    ShouldClearTextureCacheAtEndOfFrame = true;
+                    // The checkbox will flip the alt asset CVar, but we instead want it to change at the end of the game frame
+                    // We toggle it back while setting the flag to update the CVar later
+                    CVarSetInteger("gAltAssets", !CVarGetInteger("gAltAssets", 0));
+                    ToggleAltAssetsAtEndOfFrame = true;
                 }
                 UIWidgets::Tooltip("Toggle between standard assets and alternate assets. Usually mods will indicate if this setting has to be used or not.");
                 UIWidgets::PaddedEnhancementCheckbox("Disable Bomb Billboarding", "gDisableBombBillboarding", true, false);
@@ -1065,6 +1084,9 @@ void DrawEnhancementsMenu() {
             UIWidgets::Tooltip("Prevents immediately falling off climbable surfaces if climbing on the edges."); 
             UIWidgets::PaddedEnhancementCheckbox("Fix Link's eyes open while sleeping", "gFixEyesOpenWhileSleeping", true, false);
             UIWidgets::Tooltip("Fixes Link's eyes being open in the opening cutscene when he is supposed to be sleeping.");
+            UIWidgets::PaddedEnhancementCheckbox("Fix Darunia dancing too fast", "gEnhancements.FixDaruniaDanceSpeed",
+                                                 true, false, false, "", UIWidgets::CheckboxGraphics::Cross, true);
+            UIWidgets::Tooltip("Fixes Darunia's dancing speed so he dances to the beat of Saria's Song, like in vanilla.");
 
             ImGui::EndMenu();
         }
@@ -1097,17 +1119,6 @@ void DrawEnhancementsMenu() {
         UIWidgets::Spacer(0);
 
         if (ImGui::BeginMenu("Extra Modes")) {
-        #ifdef ENABLE_CROWD_CONTROL
-            if (UIWidgets::PaddedEnhancementCheckbox("Crowd Control", "gCrowdControl", false, false)) {
-                if (CVarGetInteger("gCrowdControl", 0)) {
-                    CrowdControl::Instance->Enable();
-                } else {
-                    CrowdControl::Instance->Disable();
-                }
-            }
-            UIWidgets::Tooltip("Will attempt to connect to the Crowd Control server. Check out crowdcontrol.live for more information.");
-        #endif
-
             UIWidgets::PaddedText("Mirrored World", true, false);
             if (UIWidgets::EnhancementCombobox("gMirroredWorldMode", mirroredWorldModes, MIRRORED_WORLD_OFF) && gPlayState != NULL) {
                 UpdateMirrorModeState(gPlayState->sceneNum);
@@ -1200,6 +1211,8 @@ void DrawEnhancementsMenu() {
 
         UIWidgets::PaddedSeparator(true, true, 2.0f, 2.0f);
 
+        ImGui::EndDisabled();
+
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 6.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
@@ -1241,6 +1254,8 @@ void DrawEnhancementsMenu() {
 void DrawCheatsMenu() {
     if (ImGui::BeginMenu("Cheats"))
     {
+        ImGui::BeginDisabled(CVarGetInteger("gDisableChangingSettings", 0));
+
         if (ImGui::BeginMenu("Infinite...")) {
             UIWidgets::EnhancementCheckbox("Money", "gInfiniteMoney");
             UIWidgets::PaddedEnhancementCheckbox("Health", "gInfiniteHealth", true, false);
@@ -1395,6 +1410,8 @@ void DrawCheatsMenu() {
         }
         UIWidgets::Tooltip("Clears the cutscene pointer to a value safe for wrong warps.");   
 
+        ImGui::EndDisabled();
+
         ImGui::EndMenu();
     }
 }
@@ -1405,9 +1422,16 @@ extern std::shared_ptr<SaveEditorWindow> mSaveEditorWindow;
 extern std::shared_ptr<ColViewerWindow> mColViewerWindow;
 extern std::shared_ptr<ActorViewerWindow> mActorViewerWindow;
 extern std::shared_ptr<DLViewerWindow> mDLViewerWindow;
+extern std::shared_ptr<ValueViewerWindow> mValueViewerWindow;
+#ifdef ENABLE_REMOTE_CONTROL
+extern std::shared_ptr<AnchorPlayerLocationWindow> mAnchorPlayerLocationWindow;
+extern std::shared_ptr<AnchorLogWindow> mAnchorLogWindow;
+#endif
 
 void DrawDeveloperToolsMenu() {
     if (ImGui::BeginMenu("Developer Tools")) {
+        ImGui::BeginDisabled(CVarGetInteger("gDisableChangingSettings", 0));
+
         UIWidgets::EnhancementCheckbox("OoT Debug Mode", "gDebugEnabled");
         UIWidgets::Tooltip("Enables Debug Mode, allowing you to select maps with L + R + Z, noclip with L + D-pad Right, and open the debug menu with L on the pause screen");
         if (CVarGetInteger("gDebugEnabled", 0)) {
@@ -1476,13 +1500,302 @@ void DrawDeveloperToolsMenu() {
                 mDLViewerWindow->ToggleVisibility();
             }
         }
+        UIWidgets::Spacer(0);
+        if (mValueViewerWindow) {
+            if (ImGui::Button(GetWindowButtonText("Value Viewer", CVarGetInteger("gValueViewer.WindowOpen", 0)).c_str(), ImVec2(-1.0f, 0.0f))) {
+                mValueViewerWindow->ToggleVisibility();
+            }
+        }
 
         ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(1);
 
+        ImGui::EndDisabled();
+
         ImGui::EndMenu();
     }
 }
+
+bool isStringEmpty(std::string str) {
+    // Remove spaces at the beginning of the string
+    std::string::size_type start = str.find_first_not_of(' ');
+    // Remove spaces at the end of the string
+    std::string::size_type end = str.find_last_not_of(' ');
+
+    // Check if the string is empty after stripping spaces
+    if (start == std::string::npos || end == std::string::npos)
+        return true; // The string is empty
+    else
+        return false; // The string is not empty
+}
+
+#ifdef ENABLE_REMOTE_CONTROL
+static const char* anchorPlayerHealth[4] = { "Disabled", "Numeric", "Hearts and Magic", "Numeric + Hearts and Magic" };
+
+void DrawRemoteControlMenu() {
+    if (ImGui::BeginMenu("Network")) {
+        static std::string ip = CVarGetString("gRemote.IP", "127.0.0.1");
+        static uint16_t port = CVarGetInteger("gRemote.Port", 43384);
+        static std::string AnchorName = CVarGetString("gRemote.AnchorName", "");
+        static std::string anchorRoomId = CVarGetString("gRemote.AnchorRoomId", "");
+        bool isFormValid = !isStringEmpty(CVarGetString("gRemote.IP", "127.0.0.1")) && port > 1024 && port < 65535 && (
+            CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL) != GI_SCHEME_ANCHOR ||
+            (
+                !isStringEmpty(CVarGetString("gRemote.AnchorName", "")) &&
+                !isStringEmpty(CVarGetString("gRemote.AnchorRoomId", ""))
+            )
+        );
+
+        const char* remoteOptions[3] = { "Sail", "Crowd Control", "Anchor" };
+
+        ImGui::BeginDisabled(GameInteractor::Instance->isRemoteInteractorEnabled);
+        ImGui::Text("Remote Interaction Scheme");
+        if (UIWidgets::EnhancementCombobox("gRemote.Scheme", remoteOptions, GI_SCHEME_SAIL)) {
+            switch (CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL)) {
+                case GI_SCHEME_SAIL:
+                case GI_SCHEME_CROWD_CONTROL:
+                    CVarSetString("gRemote.IP", "127.0.0.1");
+                    CVarSetInteger("gRemote.Port", 43384);
+                    ip = "127.0.0.1";
+                    port = 43384;
+                    break;
+                case GI_SCHEME_ANCHOR:
+                    CVarSetString("gRemote.IP", "anchor.proxysaw.dev");
+                    CVarSetInteger("gRemote.Port", 43385);
+                    ip = "anchor.proxysaw.dev";
+                    port = 43385;
+                    break;
+            }
+            LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+        }
+        switch (CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL)) {
+            case GI_SCHEME_SAIL:
+                UIWidgets::InsertHelpHoverText(
+                    "Sail is a networking protocol designed to facilitate remote "
+                    "control of the Ship of Harkinian client. It is intended to "
+                    "be utilized alongside a Sail server, for which we provide a "
+                    "few straightforward implementations on our GitHub. The current "
+                    "implementations available allow integration with Twitch chat "
+                    "and SAMMI Bot, feel free to contribute your own!\n"
+                    "\n"
+                    "Click the question mark to copy the link to the Sail Github "
+                    "page to your clipboard."
+                );
+                if (ImGui::IsItemClicked()) {
+                    ImGui::SetClipboardText("https://github.com/HarbourMasters/sail");
+                }
+                break;
+            case GI_SCHEME_CROWD_CONTROL:
+                UIWidgets::InsertHelpHoverText(
+                    "Crowd Control is a platform that allows viewers to interact "
+                    "with a streamer's game in real time.\n"
+                    "\n"
+                    "Click the question mark to copy the link to the Crowd Control "
+                    "website to your clipboard."
+                );
+                if (ImGui::IsItemClicked()) {
+                    ImGui::SetClipboardText("https://crowdcontrol.live");
+                }
+                break;
+            case GI_SCHEME_ANCHOR:
+                UIWidgets::InsertHelpHoverText(
+                    "Anchor is an unofficial co-op mode for Ship of Harkinian. "
+                    "It allows multiple people to play the game together, sharing "
+                    "items and world flags. You can host your own Anchor server "
+                    "but there is also a public server available.\n"
+                    "\n"
+                    "If you run into any issues, please report them on the Anchor "
+                    "thread on the Ship of Harkinian Discord server.\n"
+                    "\n"
+                    "Click the question mark to copy a link to the thread to your "
+                    "clipboard."
+                );
+                if (ImGui::IsItemClicked()) {
+                    ImGui::SetClipboardText("https://discord.com/channels/808039310850130000/1125069592365121648");
+                }
+                break;
+        }
+
+        ImGui::Text("Remote IP & Port");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 5.7);
+        if (ImGui::InputText("##gRemote.IP", (char*)ip.c_str(), ip.capacity() + 1)) {
+            CVarSetString("gRemote.IP", ip.c_str());
+            LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 5);
+        if (ImGui::InputScalar("##gRemote.Port", ImGuiDataType_U16, &port)) {
+            CVarSetInteger("gRemote.Port", port);
+            LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+        }
+        if (CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL) == GI_SCHEME_ANCHOR) {
+            ImGui::Text("Tunic Color & Name");
+            static Color_RGBA8 color = CVarGetColor("gRemote.AnchorColor", { 100, 255, 100, 255 });
+            static ImVec4 colorVec = ImVec4(color.r / 255.0, color.g / 255.0, color.b / 255.0, 1);
+            if (ImGui::ColorEdit3("##gRemote.AnchorColor", (float*)&colorVec, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+                color.r = colorVec.x * 255.0;
+                color.g = colorVec.y * 255.0;
+                color.b = colorVec.z * 255.0;
+
+                CVarSetColor("gRemote.AnchorColor", color);
+                CVarSetInteger("gCosmetics.Link_KokiriTunic.Changed", 1);
+                CVarSetInteger("gCosmetics.Link_GoronTunic.Changed", 1);
+                CVarSetInteger("gCosmetics.Link_ZoraTunic.Changed", 1);
+                CVarSetColor("gCosmetics.Link_KokiriTunic.Value", color);
+                CVarSetColor("gCosmetics.Link_GoronTunic.Value", color);
+                CVarSetColor("gCosmetics.Link_ZoraTunic.Value", color);
+                LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            if (ImGui::InputText("##gRemote.AnchorName", (char*)AnchorName.c_str(), AnchorName.capacity() + 1)) {
+                CVarSetString("gRemote.AnchorName", AnchorName.c_str());
+                LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+            }
+            ImGui::Text("Room ID");
+            int flags = 0;
+            if (GameInteractor::Instance->isRemoteInteractorEnabled) flags = ImGuiInputTextFlags_Password;
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            if (ImGui::InputText("##gRemote.AnchorRoomId", (char*)anchorRoomId.c_str(), anchorRoomId.capacity() + 1, flags)) {
+                CVarSetString("gRemote.AnchorRoomId", anchorRoomId.c_str());
+                LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+            }
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Spacing();
+
+        if (CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL) == GI_SCHEME_ANCHOR) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 6.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+            if (mAnchorPlayerLocationWindow) {
+                if (ImGui::Button(GetWindowButtonText("Player Location Window", CVarGetInteger("gRemote.AnchorPlayerLocationWindow", 0)).c_str(), ImVec2(ImGui::GetContentRegionAvail().x - 20.0f, 0.0f))) {
+                    mAnchorPlayerLocationWindow->ToggleVisibility();
+                }
+                UIWidgets::InsertHelpHoverText(
+                    "This window shows all players in the room and their current "
+                    "location.\n"
+                    "\n"
+                    "You can move this window around, and press the arrow button "
+                    "to teleport to the other player."
+                );
+            }
+            if (mAnchorLogWindow) {
+                if (ImGui::Button(GetWindowButtonText("Incoming Item Window", CVarGetInteger("gRemote.AnchorLogWindow", 0)).c_str(), ImVec2(ImGui::GetContentRegionAvail().x - 20.0f, 0.0f))) {
+                    mAnchorLogWindow->ToggleVisibility();
+                }
+                UIWidgets::InsertHelpHoverText(
+                    "This window shows all incoming items from other players. "
+                    "The messages will expire after a few seconds.\n"
+                    "\n"
+                    "You can move this window around, and press the directional "
+                    "buttons to change the direction the messages stack towards."
+                );
+            }
+            ImGui::PopStyleVar(3);
+        }
+
+        ImGui::Spacing();
+
+        ImGui::BeginDisabled(!isFormValid);
+        const char* buttonLabel = GameInteractor::Instance->isRemoteInteractorEnabled ? "Disable" : "Enable";
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 6.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        if (ImGui::Button(buttonLabel, ImVec2(-1.0f, 0.0f))) {
+            if (GameInteractor::Instance->isRemoteInteractorEnabled) {
+                CVarSetInteger("gRemote.Enabled", 0);
+                LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+                switch (CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL)) {
+                    case GI_SCHEME_SAIL:
+                        GameInteractorSail::Instance->Disable();
+                        break;
+                    case GI_SCHEME_CROWD_CONTROL:
+                        CrowdControl::Instance->Disable();
+                        break;
+                    case GI_SCHEME_ANCHOR:
+                        if (CVarGetInteger("gRemote.AnchorLogWindow", 0) && mAnchorLogWindow) {
+                            mAnchorLogWindow->ToggleVisibility();
+                        }
+                        if (CVarGetInteger("gRemote.AnchorPlayerLocationWindow", 0) && mAnchorPlayerLocationWindow) {
+                            mAnchorPlayerLocationWindow->ToggleVisibility();
+                        }
+                        GameInteractorAnchor::Instance->Disable();
+                        break;
+                }
+            } else {
+                CVarSetInteger("gRemote.Enabled", 1);
+                LUS::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesOnNextTick();
+                switch (CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL)) {
+                    case GI_SCHEME_SAIL:
+                        GameInteractorSail::Instance->Enable();
+                        break;
+                    case GI_SCHEME_CROWD_CONTROL:
+                        CrowdControl::Instance->Enable();
+                        break;
+                    case GI_SCHEME_ANCHOR:
+                        if (!CVarGetInteger("gRemote.AnchorLogWindow", 0) && mAnchorLogWindow) {
+                            mAnchorLogWindow->ToggleVisibility();
+                        }
+                        if (!CVarGetInteger("gRemote.AnchorPlayerLocationWindow", 0) && mAnchorPlayerLocationWindow) {
+                            mAnchorPlayerLocationWindow->ToggleVisibility();
+                        }
+                        GameInteractorAnchor::Instance->Enable();
+                        break;
+                }
+            }
+        }
+        ImGui::PopStyleVar(2);
+        ImGui::EndDisabled();
+
+        if (GameInteractor::Instance->isRemoteInteractorEnabled) {
+            ImGui::Spacing();
+            if (!GameInteractor::Instance->isRemoteInteractorConnected) {
+                ImGui::Text("Connecting...");
+            }
+        }
+
+        if (GameInteractor::Instance->isRemoteInteractorConnected && CVarGetInteger("gRemote.Scheme", GI_SCHEME_SAIL) == GI_SCHEME_ANCHOR) {
+            if (ImGui::Button("Request State", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
+                Anchor_RequestSaveStateFromRemote();
+            }
+
+            ImGui::Text("Players in Room:");
+            ImGui::Text("%s", CVarGetString("gRemote.AnchorName", ""));
+            for (auto& [clientId, client] : GameInteractorAnchor::AnchorClients) {
+                ImGui::Text("%s", client.name.c_str());
+                if (client.clientVersion != GameInteractorAnchor::clientVersion) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1, 0, 0, 1), ICON_FA_EXCLAMATION_TRIANGLE);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::Text("Incompatible version! Will not work together!");
+                        ImGui::Text("Yours: %s", GameInteractorAnchor::clientVersion.c_str());
+                        ImGui::Text("Theirs: %s", client.clientVersion.c_str());
+                        ImGui::EndTooltip();
+                    }
+                }
+                if (client.seed != gSaveContext.finalSeed && client.fileNum != 0xFF && gSaveContext.fileNum != 0xFF) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1, 0, 0, 1), ICON_FA_EXCLAMATION_TRIANGLE);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::Text("Seed mismatch! Continuing will break things!");
+                        ImGui::Text("Yours: %u", gSaveContext.finalSeed);
+                        ImGui::Text("Theirs: %u", client.seed);
+                        ImGui::EndTooltip();
+                    }
+                }
+            }
+
+            ImGui::Spacing();
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        ImGui::EndMenu();
+    }
+}
+#endif
 
 extern std::shared_ptr<RandomizerSettingsWindow> mRandomizerSettingsWindow;
 extern std::shared_ptr<ItemTrackerWindow> mItemTrackerWindow;
@@ -1621,6 +1934,12 @@ void SohMenuBar::DrawElement() {
         DrawDeveloperToolsMenu();
 
         ImGui::SetCursorPosY(0.0f);
+
+        #ifdef ENABLE_REMOTE_CONTROL
+        DrawRemoteControlMenu();
+
+        ImGui::SetCursorPosY(0.0f);
+        #endif
 
         DrawRandomizerMenu();
 

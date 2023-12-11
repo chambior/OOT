@@ -6,6 +6,9 @@
 
 #include "z_en_ms.h"
 #include "objects/object_ms/object_ms.h"
+#ifdef ENABLE_REMOTE_CONTROL
+#include "soh/Enhancements/game-interactor/GameInteractor_Anchor.h"
+#endif
 
 #define FLAGS (ACTOR_FLAG_TARGETABLE | ACTOR_FLAG_FRIENDLY)
 
@@ -163,11 +166,17 @@ void EnMs_Sell(EnMs* this, PlayState* play) {
             gSaveContext.pendingSaleMod = itemEntry.modIndex;
             GiveItemEntryFromActor(&this->actor, play, itemEntry, 90.0f, 10.0f);
             BEANS_BOUGHT = 10;
+#ifdef ENABLE_REMOTE_CONTROL
+            Anchor_UpdateBeansBought(BEANS_BOUGHT);
+#endif
         } else {
             GetItemEntry entry = ItemTable_Retrieve(GI_BEAN);
             gSaveContext.pendingSaleMod = entry.modIndex;
             gSaveContext.pendingSale = entry.itemId;
             func_8002F434(&this->actor, play, GI_BEAN, 90.0f, 10.0f);
+#ifdef ENABLE_REMOTE_CONTROL
+            Anchor_UpdateBeansBought(BEANS_BOUGHT);
+#endif
         }
     }
 }
@@ -191,7 +200,7 @@ void EnMs_Update(Actor* thisx, PlayState* play) {
     SkelAnime_Update(&this->skelAnime);
     this->actionFunc(this, play);
 
-    if (gSaveContext.entranceIndex == 0x157 && gSaveContext.sceneSetupIndex == 8) { // ride carpet if in credits
+    if (gSaveContext.entranceIndex == ENTR_LON_LON_RANCH_0 && gSaveContext.sceneSetupIndex == 8) { // ride carpet if in credits
         Actor_MoveForward(&this->actor);
         osSyncPrintf("OOOHHHHHH %f\n", this->actor.velocity.y);
         Actor_UpdateBgCheckInfo(play, &this->actor, 0.0f, 0.0f, 0.0f, 4);
